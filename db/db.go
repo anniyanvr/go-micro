@@ -1,6 +1,5 @@
-// Package store is an interface for distributed data storage.
-// The design document is located at https://github.com/micro/development/blob/master/design/framework/store.md
-package store
+// Package db provides a database abstraction for persistent storage
+package db
 
 import (
 	"errors"
@@ -14,10 +13,6 @@ var (
 
 // Store is a data storage interface
 type Store interface {
-	// Init initialises the store. It must perform any required setup on the backing storage implementation and check that it is ready for use, returning any errors.
-	Init(...Option) error
-	// Options allows you to view the current options.
-	Options() Options
 	// Read takes a single key name and optional ReadOptions. It returns matching []*Record or an error.
 	Read(key string, opts ...ReadOption) ([]*Record, error)
 	// Write() writes a record to the store, and returns an error if the record was not written.
@@ -28,8 +23,6 @@ type Store interface {
 	List(opts ...ListOption) ([]string, error)
 	// Close the store
 	Close() error
-	// String returns the name of the implementation.
-	String() string
 }
 
 // Record is an item stored or retrieved from a Store

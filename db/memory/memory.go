@@ -1,4 +1,4 @@
-// Package memory is a in-memory store store
+// Package memory is a in-memory db db
 package memory
 
 import (
@@ -8,17 +8,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/asim/nitro/v3/store"
+	"github.com/asim/nitro/v3/db"
 )
 
-// NewStore returns a memory store
-func NewStore(opts ...store.Option) store.Store {
+// NewStore returns a memory db
+func NewStore(opts ...db.Option) db.Store {
 	s := &memoryStore{
-		options: store.Options{
+		options: db.Options{
 			Database: "micro",
 			Table:    "micro",
 		},
-		stores: make(map[string]*storeValues),
+		dbs: make(map[string]*dbValues),
 	}
 	for _, o := range opts {
 		o(&s.options)
@@ -28,23 +28,23 @@ func NewStore(opts ...store.Option) store.Store {
 
 type memoryStore struct {
 	sync.RWMutex
-	options store.Options
+	options db.Options
 
-	stores map[string]*storeValues
+	dbs map[string]*dbValues
 }
 
-type storeRecord struct {
+type dbRecord struct {
 	key       string
 	value     []byte
 	metadata  map[string]interface{}
 	expiresAt time.Time
 }
 
-type storeValues struct {
-	values map[string]*storeRecord
+type dbValues struct {
+	values map[string]*dbRecord
 }
 
-func (s *storeValues) Get(key string) (*storeRecord, bool) {
+func (s *dbValues) Get(key string) (*dbRecord, bool) {
 	v, ok := s.values[key]
 	if !ok {
 		return nil, false
@@ -60,20 +60,20 @@ func (s *storeValues) Get(key string) (*storeRecord, bool) {
 	return nil, false
 }
 
-func (s *storeValues) Delete(key string) {
+func (s *dbValues) Delete(key string) {
 	delete(s.values, key)
 }
 
-func (s *storeValues) Set(key string, v *storeRecord) {
+func (s *dbValues) Set(key string, v *dbRecord) {
 	s.values[key] = v
 }
 
-func (s *storeValues) List() map[string]*storeRecord {
+func (s *dbValues) List() map[string]*dbRecord {
 	return s.values
 }
 
-func (s *storeValues) Flush() {
-	s.values = make(map[string]*storeRecord)
+func (s *dbValues) Flush() {
+	s.values = make(map[string]*dbRecord)
 }
 
 func (m *memoryStore) prefix(database, table string) string {
@@ -86,55 +86,55 @@ func (m *memoryStore) prefix(database, table string) string {
 	return filepath.Join(database, table)
 }
 
-func (m *memoryStore) getStore(prefix string) *storeValues {
+func (m *memoryStore) getStore(prefix string) *dbValues {
 	m.RLock()
-	store := m.stores[prefix]
+	db := m.dbs[prefix]
 	m.RUnlock()
-	if store == nil {
+	if db == nil {
 		m.Lock()
-		if m.stores[prefix] == nil {
-			m.stores[prefix] = &storeValues{
-				values: make(map[string]*storeRecord),
+		if m.dbs[prefix] == nil {
+			m.dbs[prefix] = &dbValues{
+				values: make(map[string]*dbRecord),
 			}
 		}
-		store = m.stores[prefix]
+		db = m.dbs[prefix]
 		m.Unlock()
 	}
-	return store
+	return db
 }
 
-func (m *memoryStore) get(prefix, key string) (*store.Record, error) {
-	storedRecord, found := m.getStore(prefix).Get(key)
+func (m *memoryStore) get(prefix, key string) (*db.Record, error) {
+	dbdRecord, found := m.getStore(prefix).Get(key)
 	if !found {
-		return nil, store.ErrNotFound
+		return nil, db.ErrNotFound
 	}
 
 	// Copy the record on the way out
-	newRecord := &store.Record{}
-	newRecord.Key = strings.TrimPrefix(storedRecord.key, prefix+"/")
-	newRecord.Value = make([]byte, len(storedRecord.value))
+	newRecord := &db.Record{}
+	newRecord.Key = strings.TrimPrefix(dbdRecord.key, prefix+"/")
+	newRecord.Value = make([]byte, len(dbdRecord.value))
 	newRecord.Metadata = make(map[string]interface{})
 
 	// copy the value into the new record
-	copy(newRecord.Value, storedRecord.value)
+	copy(newRecord.Value, dbdRecord.value)
 
 	// check if we need to set the expiry
-	if !storedRecord.expiresAt.IsZero() {
-		newRecord.Expiry = time.Until(storedRecord.expiresAt)
+	if !dbdRecord.expiresAt.IsZero() {
+		newRecord.Expiry = time.Until(dbdRecord.expiresAt)
 	}
 
 	// copy in the metadata
-	for k, v := range storedRecord.metadata {
+	for k, v := range dbdRecord.metadata {
 		newRecord.Metadata[k] = v
 	}
 
 	return newRecord, nil
 }
 
-func (m *memoryStore) set(prefix string, r *store.Record) {
+func (m *memoryStore) set(prefix string, r *db.Record) {
 	// copy the incoming record and then
 	// convert the expiry in to a hard timestamp
-	i := &storeRecord{}
+	i := &dbRecord{}
 	i.key = r.Key
 	i.value = make([]byte, len(r.Value))
 	i.metadata = make(map[string]interface{})
@@ -196,13 +196,13 @@ func (m *memoryStore) list(prefix string, limit, offset uint, prefixFilter, suff
 func (m *memoryStore) Close() error {
 	m.Lock()
 	defer m.Unlock()
-	for _, s := range m.stores {
+	for _, s := range m.dbs {
 		s.Flush()
 	}
 	return nil
 }
 
-func (m *memoryStore) Init(opts ...store.Option) error {
+func (m *memoryStore) Init(opts ...db.Option) error {
 	for _, o := range opts {
 		o(&m.options)
 	}
@@ -213,8 +213,8 @@ func (m *memoryStore) String() string {
 	return "memory"
 }
 
-func (m *memoryStore) Read(key string, opts ...store.ReadOption) ([]*store.Record, error) {
-	readOpts := store.ReadOptions{}
+func (m *memoryStore) Read(key string, opts ...db.ReadOption) ([]*db.Record, error) {
+	readOpts := db.ReadOptions{}
 	for _, o := range opts {
 		o(&readOpts)
 	}
@@ -237,7 +237,7 @@ func (m *memoryStore) Read(key string, opts ...store.ReadOption) ([]*store.Recor
 		keys = []string{key}
 	}
 
-	var results []*store.Record
+	var results []*db.Record
 
 	for _, k := range keys {
 		r, err := m.get(prefix, k)
@@ -250,8 +250,8 @@ func (m *memoryStore) Read(key string, opts ...store.ReadOption) ([]*store.Recor
 	return results, nil
 }
 
-func (m *memoryStore) Write(r *store.Record, opts ...store.WriteOption) error {
-	writeOpts := store.WriteOptions{}
+func (m *memoryStore) Write(r *db.Record, opts ...db.WriteOption) error {
+	writeOpts := db.WriteOptions{}
 	for _, o := range opts {
 		o(&writeOpts)
 	}
@@ -260,7 +260,7 @@ func (m *memoryStore) Write(r *store.Record, opts ...store.WriteOption) error {
 
 	if len(opts) > 0 {
 		// Copy the record before applying options, or the incoming record will be mutated
-		newRecord := store.Record{}
+		newRecord := db.Record{}
 		newRecord.Key = r.Key
 		newRecord.Value = make([]byte, len(r.Value))
 		newRecord.Metadata = make(map[string]interface{})
@@ -281,8 +281,8 @@ func (m *memoryStore) Write(r *store.Record, opts ...store.WriteOption) error {
 	return nil
 }
 
-func (m *memoryStore) Delete(key string, opts ...store.DeleteOption) error {
-	deleteOptions := store.DeleteOptions{}
+func (m *memoryStore) Delete(key string, opts ...db.DeleteOption) error {
+	deleteOptions := db.DeleteOptions{}
 	for _, o := range opts {
 		o(&deleteOptions)
 	}
@@ -292,12 +292,12 @@ func (m *memoryStore) Delete(key string, opts ...store.DeleteOption) error {
 	return nil
 }
 
-func (m *memoryStore) Options() store.Options {
+func (m *memoryStore) Options() db.Options {
 	return m.options
 }
 
-func (m *memoryStore) List(opts ...store.ListOption) ([]string, error) {
-	listOptions := store.ListOptions{}
+func (m *memoryStore) List(opts ...db.ListOption) ([]string, error) {
+	listOptions := db.ListOptions{}
 
 	for _, o := range opts {
 		o(&listOptions)
